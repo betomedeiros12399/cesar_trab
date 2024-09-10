@@ -1,0 +1,678 @@
+
+;16 bits
+		org		hff80
+STACK:
+		daw		[31]		; Área Separada
+IVET:	dw		0			; V INterrupção
+
+;8 bits
+		dab		[23]
+TIMDT:	db		0		;Timer
+INTS:	db		0		
+INTE:	db		0		
+TECST:	db		0		;Status teclado
+TECDT:	db		0		;Dado do teclado
+VISOR:	dab		[36]	;Acesso ao visor
+
+;--------------------------------------------
+
+	org		0
+
+;Inicialização
+	mov		#STACK,r6
+	
+	clr		INTS			; Reset interrupção
+	clr		TECST			; Reset state do teclado
+	jmp		chama
+
+
+
+
+	org		h7f00
+
+FuncaoRelogio:		dw  	9000	;2.1
+Funcao2:		dw	13000	;2.2
+FuncaoMovimentador:	dw 	16000	;2.3
+
+
+
+
+
+
+
+
+
+chama:
+	org		h8000
+
+
+		MOV #0,R0
+		JSR R7,(H7F00(R0)) ; Chama a função de Relógio	2.1
+		MOV #2,R0
+		JSR R7,(H7F00(R0)) ; Chama a função de Leitura de String 2.2
+		MOV #4,R0
+		JSR R7,(H7F00(R0)) ; Chama a função de Movimentação 2.3
+		HLT
+
+
+
+
+
+
+
+
+
+
+
+
+ORG	9000 ; f 2.1
+
+	mov		#isr,IVET		
+	mov		#100,TIMDT		;timer 100ms
+	clr		FlagCtrlF
+		
+;	Inicializa relógio
+	mov		#4,r0
+	mov		#Relogio,r1
+l_relogio:
+	clr		(r1)+
+	sob		r0,l_relogio
+	
+;	Limpa o visor
+	mov		#36,r0
+	mov		#VISOR,r1
+l_reset:
+	mov		#' ',(r1)
+	inc		r1
+	sob		r0,l_reset
+		
+;--------------------------------
+;	Responsável por atualizar a informação do relógio no visor.
+main:
+	mov		#h83,INTE
+l_main:
+
+	; Coloca o Relogio no visor
+	cmp		FlagCtrlF, #1
+	bne		Segue_Cod
+	rts		r7
+
+Segue_Cod:
+	mov		Hora,r0
+	mov		#VISOR,r1
+	jsr		r7,dspDec
+	
+	mov		#':',VISOR+2
+
+	mov		Minuto,r0
+	mov		#VISOR+3,r1
+	jsr		r7,dspDec
+	
+	mov		#':',VISOR+5
+
+	mov		Segundo,r0
+	mov		#VISOR+6,r1
+	jsr		r7,dspDec
+
+
+	br		l_main
+
+;--------------------------------
+;	Coloca um número de 2 digitos no visor
+
+dspDec:
+	clr		r2
+Dec_2:
+	cmp		r0,#10
+	blt		Dec_1
+	sub		#10,r0
+	inc		r2
+	br		Dec_2
+Dec_1:
+	add		#'0',r2
+	add		#'0',r0
+	mov		r2,(r1)
+	inc		r1
+	mov		r0,(r1)
+	rts		r7
+		
+;--------------------------
+; 6 partes
+Relogio:
+Hora:		dw	0
+Minuto:		dw	0
+Segundo:	dw	0
+Decimos:	dw	0
+
+
+;-------------------------
+; Rotina de INTERRUPÇÃO
+isr:
+	mov		r0,-(r6)	; Salva registradores 
+	mov		r1,-(r6)
+	mov		r2,-(r6)
+	mov		r3,-(r6)
+	mov		r4,-(r6)
+	mov		r5,-(r6)
+
+	
+	MOV		INTS, R0	; R0 Recebe o conteúdo de INTS
+	AND		#h1, R0		; Checa se a interrupção foi pelo timer.	
+	BEQ		Testar_Tecl
+	JSR		R7, ISRtim	; Jump para a subrotina que trata de interrupções pelo timer.
+	AND		#HFFFE, INTS	; Desliga os bits do timer.
+
+Testar_Tecl:
+	mov		INTS,r0		; Verifica se é INT do Teclado
+	AND 		#h2, R0		; Checa se a interrupção foi pelo teclado.
+	BEQ		ISR2		; Se não for o teclado
+	JSR		R7, ISR_tecl	; Jump para a subrotina que trata de interrupções pelo teclado.
+	AND		#HFFFD, INTS	; Desliga os bits do teclado.
+
+ISR2:
+	
+	mov		(r6)+,r5	; Retorna os registradores da pilha
+	mov		(r6)+,r4
+	mov		(r6)+,r3
+	mov		(r6)+,r2
+	mov		(r6)+,r1
+	mov		(r6)+,r0
+
+	rti					; Return From Interrupt
+	
+
+;----------------------
+;Int timer
+
+ISRtim:
+	inc		Decimos
+	cmp		Decimos,#10
+	blt		ISRtim_Fim
+	clr		Decimos
+
+	inc		Segundo
+	cmp		Segundo,#60
+	blt		ISRtim_Fim
+	clr		Segundo
+
+	inc		Minuto
+	cmp		Minuto,#60
+	blt		ISRtim_Fim
+	clr		Minuto
+
+	inc		Hora
+	cmp		Hora,#24
+	blt		ISRtim_Fim
+	clr		Hora
+
+ISRtim_Fim:
+	rts		r7
+
+;Int teclado
+	
+ISR_tecl:
+	
+	CMP		#6, TECDT
+	BEQ		trata_CtrlF
+
+	CMP 		#'Z', TECDT
+	BEQ 		zerar_rel
+	CMP 		#'z', TECDT
+	BEQ 		zerar_rel
+
+	CMP 		#'M', TECDT
+	BEQ		minutos
+	CMP 		#'m', TECDT
+	BEQ		minutos
+
+	CMP 		#'H', TECDT
+	BEQ		horas
+	CMP 		#'h', TECDT
+	BEQ		horas
+	
+
+
+fim:
+	clr 		TECST
+	rts		r7
+
+minutos:
+	inc		Minuto
+	cmp		Minuto,#60
+	blt		fim
+	clr		Minuto	
+
+horas:
+	inc		Hora
+	cmp		Hora,#24
+	blt		fim
+
+zerar_rel:
+	clr		Segundo
+	clr		Minuto
+	clr		Hora
+	jmp		fim
+
+trata_CtrlF:
+	MOV 		#1,FlagCtrlF
+	JMP		fim
+
+
+
+
+
+
+ORG 13000 ; f 2.2
+
+	;Leitura de String
+
+
+
+	clr		Flag_CtrlF	; flag p sair da função
+	clr		ints
+	clr		tecst
+	
+;limpa visor					
+	mov		#36,r0
+	mov		#VISOR,r1
+loop_reset_cursor:
+	mov		#' ',(r1)
+	inc		r1
+	sob		r0,loop_reset_cursor
+		
+;-------------------
+;main
+
+main_cursor:
+    mov        	#VISOR,r3		; percorrer o visor com r3
+    mov		#h83,INTE		; interrupção de timer e de teclado
+    mov		#isr1,IVET		
+    mov		#250,TIMDT		; timer 250ms
+	
+loop_main_cursor:
+
+	cmp		Flag_CtrlF, #1
+	bne		Seguir_Codigo
+	rts		r7		;saida
+Seguir_Codigo:
+    	br		loop_main_cursor
+	
+;----------------
+;Interrupção
+isr1:
+	mov		r0,-(r6)		
+	mov		r1,-(r6)
+	mov		r2,-(r6)
+	;mov		r3,-(r6)		; usado para o visor
+	mov		r4,-(r6)
+	mov		r5,-(r6)
+
+	mov		INTS,r0			; Verifica se é INT do Teclado
+	AND 		#h2, R0			; Checa se a interrupção foi pelo teclado.
+	BEQ		Testa_Timer_cursor	; Se não for o teclado, testa se é do timer.
+	JSR		R7,isr_stringtecl	; Jump para a subrotina que trata de interrupções pelo teclado.
+	AND		#HFFFD, INTS	     	; Desliga os bits do teclado.
+	
+Testa_Timer_cursor:
+	MOV		INTS, R0		
+	AND		#h1, R0			; se a interrupção é timer	
+	BEQ		isr1Fim	 	; para fim da interrupção
+	JSR		R7, isr_string_timer 	; Jump timer.
+	AND		#HFFFE, INTS		; Desliga os bits 
+
+
+isr1Fim:
+	
+	mov		(r6)+,r5		; Retorna os registradores da pilha
+	mov		(r6)+,r4
+	;mov		(r6)+,r3		
+	mov		(r6)+,r2
+	mov		(r6)+,r1
+	mov		(r6)+,r0
+
+	rti					
+	
+
+;----------------------
+
+isr_string_timer:
+	TST 		Flag_aux		; testa a Flag auxuliar
+	bne		caractnulo
+    	
+    	mov        	#'_',(r3)		; '_'
+	MOV		#1, Flag_aux
+	JMP		isr_stringteclFim
+
+caractnulo:
+    	mov        	#' ',(R3)
+	MOV		#0, Flag_aux		; ' '
+	JMP		isr_stringteclFim
+
+
+;-------------------------
+	
+isr_stringtecl:
+	mov        	TECDT,(R3)       	; coloca o dado do teclado no visor 
+	inc		r3			; incrementa R3 para ir para a próxima posição no visor
+	clr 		TECST	
+
+	CMP		#13, TECDT		
+	BEQ		cursor_max_esq
+
+	CMP 		#10, TECDT		; compara Ctrl-J 
+	BEQ 		clear_visorigual
+	
+	CMP 		#8, TECDT		; compara Backspace
+	BEQ 		deletecla
+
+	CMP		#6, TECDT		; compara Ctrl-F
+	BEQ		CtrlF_1
+		
+isr_stringteclFim:
+	CMP 		R3,#HFFFF		; passou do visor
+	BEQ		clear_visor
+	rts		r7
+
+clear_visor:
+	mov		#36,r0
+	mov		#VISOR,r1
+rescursor1:
+	mov		#' ',(r1)
+	inc		r1
+	sob		r0,rescursor1
+	MOV 		#VISOR, R3
+	JMP		isr_stringteclFim
+		
+cursor_max_esq:
+	MOV		#HFFDC, r3		; R3 para o inicio 
+	JMP 		isr_stringteclFim
+
+clear_visorigual:
+	dec 		r3			; decrementa R3 depois do incremento
+	mov		#36,r0
+	mov		#VISOR,r1
+resvisor:				; reseta o visor
+	mov		#' ',(r1)
+	inc		r1
+	sob		r0,resvisor
+	JMP 		isr_stringteclFim
+
+deletecla:
+					; próprio cursor vai sobrescrever 
+	DEC		r3		; decrementa duas vezes, pois no inicio o R3 é incrementado
+	DEC		r3	
+	JMP 		isr_stringteclFim
+
+CtrlF_1:
+	MOV 		#1,Flag_CtrlF		; sair da função
+	CLR		R3
+	JMP		isr_stringteclFim
+
+
+	
+
+
+
+
+	ORG 16000 ; f 2.3
+	
+	clr		INTS			; Reset pedidos de interrupção
+	clr		TECST			
+	mov		#100,TempoPosicao
+	mov		#100,IndexTempo
+	mov		#isrVelo,IVET
+	mov		#h83,INTE
+	mov        	#-1,Tecla
+    	mov        	#VISOR,EndVisor
+	mov		#20, TIMDT
+
+mainVelo:
+	cmp		FimMovimentador, #1
+	bne		SCodigo2
+	rts		r7
+SCodigo2:
+    	cmp        Tecla,#255
+   	bhi        mainVelo
+
+
+isrVelo:
+	mov		r0,-(r6)	; Salva registradores 
+	mov		r1,-(r6)
+	mov		r2,-(r6)
+	mov		r3,-(r6)
+	mov		r4,-(r6)
+	mov		r5,-(r6)
+
+	
+	MOV		INTS, R0	
+	AND		#1, R0		; checa interrupção pelo timer	
+	BEQ		Tecl3
+	JSR		R7, ISRvelotimer	
+	AND		#HFFFE, INTS	
+
+Tecl3:  
+	mov		INTS,r0		
+	AND 		#2, R0		; checa interrupção teclado
+	BEQ		ISR2Velocidade	
+	JSR		R7, ISRvelotecl	
+	AND		#HFFFD, INTS	
+
+ISR2Velocidade:
+	
+	mov		(r6)+,r5	; Retorna os registradores da pilha
+	mov		(r6)+,r4
+	mov		(r6)+,r3
+	mov		(r6)+,r2
+	mov		(r6)+,r1
+	mov		(r6)+,r0
+
+	rti					
+	
+
+;--------------------------
+
+ISRvelotimer:
+	CMP		FlagCtrlM,#1
+	BNE		pronto
+	SUB		#20,IndexTempo
+	TST		IndexTempo
+	BNE		pronto
+	MOV		EndVisor,r0
+	MOV		#0,(r0)
+	CMP		EndVisor,#65535
+	BEQ		Fimabsoluto
+	INC		EndVisor
+	MOV		EndVisor,R0
+	MOV		#'O',(R0)
+	MOV		TempoPosicao, IndexTempo
+	
+
+	
+	
+pronto:	
+	rts		r7
+
+	
+
+Fimabsoluto:
+	mov		#1, FimMovimentador
+	rts		r7
+
+
+CtrlM:
+	MOV		#1, FlagCtrlM
+	MOV 		EndVisor,r3
+	MOV		#0,(r3)
+	MOV		#VISOR,EndVisor
+	MOV		EndVisor,r3
+	MOV		#'O',(R3)
+	JMP		velofim
+
+ISRvelotecl:
+
+	CMP		#6,TECDT
+	BEQ		Fimabsoluto
+	
+	CMP		#13, TECDT
+	BEQ		CtrlM
+
+	
+	CMP		#48,TECDT
+	BEQ		zero
+
+	CMP		#49,TECDT
+	BEQ		um
+
+	CMP		#50,TECDT
+	BEQ		dois
+
+	CMP		#51,TECDT
+	BEQ		tres
+
+	CMP		#52,TECDT
+	BEQ		quatro
+
+	CMP		#53,TECDT
+	BEQ		cinco
+
+	CMP		#54,TECDT
+	BEQ		seis
+
+	CMP		#55,TECDT
+	BEQ		sete
+
+	CMP		#56,TECDT
+	BEQ		oito
+
+	CMP		#57,TECDT
+	BEQ		nove
+	
+	JMP		velofim2
+
+velofim:
+	MOV		TempoPosicao, IndexTempo
+
+velofim2:
+	clr 		TECST
+	rts		r7
+
+	
+zero:
+	MOV		#20,TempoPosicao
+	JMP		velofim
+
+um:
+	MOV		#40,TempoPosicao
+	JMP		velofim
+
+dois:
+	MOV		#60,TempoPosicao
+	JMP		velofim
+
+tres:
+	MOV		#80,TempoPosicao
+	JMP		velofim
+
+
+quatro:
+	MOV		#100,TempoPosicao
+	JMP		velofim
+
+cinco:
+	MOV		#200,TempoPosicao
+	JMP		velofim
+
+seis:
+	MOV		#240,TempoPosicao
+	JMP		velofim
+
+sete:
+	MOV		#500,TempoPosicao
+	JMP		velofim
+
+oito:
+	MOV		#740,TempoPosicao
+	JMP		velofim
+
+nove:
+	MOV		#900,TempoPosicao
+	JMP		velofim	
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+	
+
+
+
+
+
+
+	
+	
+
+
+	
+
+
+	
+
+
+
+
+
+
+
+
+
+
+ORG 20000
+FlagCtrlF:	db	0
+FlagInicioVelocidade: db	0
+FlagCtrlM:	db	0
+Tecla:		dw	0
+EndVisor:	dw	0
+TempoPosicao:	dw	0
+IndexTempo:	dw	0
+FimMovimentador:db      0
+Flag_aux:	 db	0			; Flag auxuliar que escreve o cursor 
+Flag_CtrlF:	db	0
+
+	
+	
+
+	
+		
+
+		
